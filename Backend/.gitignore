@@ -1,0 +1,55 @@
+# ── Environment & secrets ─────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Virtual environment ───────────────────────────────────────
+.venv
+venv
+env
+ENV
+
+# ── Python cache ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# ── Temp uploaded files ───────────────────────────────────────
+temp/
+*.pdf
+*.txt
+
+# ── Logs — ignore files but keep the directory ────────────────
+logs/*
+!logs/.gitkeep
+
+# ── Test output ───────────────────────────────────────────────
+ocr_test_output/
+llmwhisperer_test_output/
+extracted_output.txt
+test_*.py
+
+# ── IDE ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── OS ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Pytest / coverage ─────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Build artifacts ───────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+
+# ── Delete script (contains collection/DB logic, keep local) ──
+delete.py
