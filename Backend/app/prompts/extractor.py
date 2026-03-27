@@ -27,7 +27,24 @@ Text:
 """
 
 REFERENCE_CHUNK_ENTITY_PROMPT = """
-You are an expert entity extractor. Given the following reference list, extract ONLY organization names and technology names. Do NOT extract author names or person names.
+You are an expert entity extractor. Given the following reference list, extract ONLY relevant non-person entities.
+
+Focus on extracting:
+- ORGANIZATION
+- TECHNOLOGY
+- MODEL
+- DATASET
+
+Do NOT extract:
+- person names (e.g., "Fei et al.")
+- citation-only references
+- URLs, arXiv IDs, or noisy tokens
+- section/table/figure references
+
+Rules:
+- Only extract meaningful and clearly identifiable entities
+- Avoid duplicates
+- Ignore formatting artifacts
 
 Return ONLY a valid JSON object in this exact format, no preamble:
 {{

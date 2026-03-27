@@ -1,5 +1,5 @@
-FACT_VERIFICATION_PROMPT = """
-You are a fact verification expert.
+
+FACT_VERIFICATION_PROMPT = """You are a fact verification expert.
 
 Your job is to check whether a given claim is supported by the provided source text.
 
@@ -20,7 +20,14 @@ Instructions:
 - Do NOT flag a claim just because the exact wording is not in the source text.
 - Do NOT flag a claim just because it is a short phrase — check if the concept is present.
 
-Respond ONLY with valid JSON, no preamble:
+Confidence rules — THIS IS IMPORTANT:
+- "confidence" represents how certain you are in YOUR VERDICT, not how strongly the claim is supported.
+- If supported=true  and confidence=0.9 → you are 90% sure the source backs this claim.
+- If supported=false and confidence=0.9 → you are 90% sure this claim is absent from the source.
+- NEVER return confidence=0.0 unless the source text is completely unreadable or empty.
+- A flagged claim should still have a HIGH confidence (e.g. 0.8–0.95) if you are sure it is not in the source.
+
+Respond ONLY with valid JSON, no preamble, no markdown fences:
 {{
     "supported": true or false,
     "confidence": 0.0 to 1.0,

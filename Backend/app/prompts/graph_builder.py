@@ -10,24 +10,39 @@ Source Text:
 {content}
 
 Rules:
-- Only create relationships between entities that are explicitly mentioned together in the text
-- Use clear, meaningful relationship labels in UPPERCASE_SNAKE_CASE
-- Each relationship must have a source AND target that exist in the entities list above
-- Return a maximum of 8 relationships
-- Do NOT create relationships based on examples, analogies, or hypothetical scenarios in the text
-- Do NOT create relationships between fictional characters or illustrative examples used in the paper
-- Only create relationships that describe real, factual connections between the actual entities of the document
-- Do NOT create relationships based on proximity alone (entities mentioned in the same paragraph)
-- Do NOT create relationships between email addresses, dates, or table/figure references
+- Create relationships between entities that are clearly related in the text (not necessarily in the same sentence)
+- Each relationship must use ONLY the allowed types below
+- DO NOT use generic relationships like RELATED_TO
+- If relationship is weak or unclear, skip it
+- Each relationship must have correct direction
 
-For each relationship return:
-- source: exact name of the first entity (must match entity list)
-- target: exact name of the second entity (must match entity list)
-- relationship: UPPERCASE_SNAKE_CASE label (e.g. WORKS_FOR, PART_OF, USED_BY, RELATED_TO, DEVELOPED_BY)
-- description: one-line description of the relationship
+Allowed relationship types:
 
-You MUST return ONLY a raw JSON object. No explanation, no markdown, no code blocks.
-Start your response with {{ and end with }}
+- USES
+- EVALUATED_ON
+- RUNS_ON
+- DEVELOPED_BY
+- AUTHORED_BY
+- AFFILIATED_WITH
+- COMPARED_WITH
+- CITES
+- PART_OF
+- PUBLISHED_AT
+- BASED_ON
+
+Direction rules:
+
+- Model → USES → Method/Technology
+- Model → EVALUATED_ON → Dataset
+- Model → RUNS_ON → Hardware
+- Paper → AUTHORED_BY → Person
+- Person → AFFILIATED_WITH → Organization
+- Paper/Model → PUBLISHED_AT → Conference/Event
+
+- Return maximum 10 high-quality relationships
+- Ignore noisy entities (tables, sections, citations unless meaningful)
+
+Return ONLY JSON:
 
 {{
     "relationships": [
