@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 import logging
@@ -13,8 +14,12 @@ db = MongoDB()
 @router.post("/build-graph")
 async def build_graph_api(doc_id: str):
     """
-    Builds knowledge graph in Neo4j from extracted entities.
-    Requires: /extract-entities to have been called first.
+    Build a knowledge graph.
+
+    Returns:
+        - doc_id
+        - nodes_created
+        - relationships_created
     """
     logger.info(f"Building graph for doc_id: {doc_id}")
 
@@ -25,8 +30,15 @@ async def build_graph_api(doc_id: str):
         raise HTTPException(status_code=400, detail="Entities not found. Run /extract-entities first.")
 
     try:
-        result = await run_in_threadpool(build_graph, doc_id, document["entities"], document["chunks"])
-        db.update_document(doc_id, {"graph_built": True})
+        result = await run_in_threadpool(
+            build_graph,
+            doc_id,
+            document["entities"],
+            document["chunks"]
+        )
+
+        db.update_document(doc_id, {"graph_built": True})  # mark graph ready
+
         return {
             "doc_id": doc_id,
             "nodes_created": result["nodes"],
@@ -40,12 +52,16 @@ async def build_graph_api(doc_id: str):
 
 @router.get("/graph-query")
 async def graph_query_api(
-    doc_id: str = Query(..., description="Document ID from /summarize"),
-    entity: str = Query(..., description="Entity name to query relationships for")
+    doc_id: str = Query(..., description="Document ID"),
+    entity: str = Query(..., description="Entity name")
 ):
     """
-    Query relationships for a specific entity within a document.
-    Requires: /build-graph to have been called first.
+    Get relationships for an entity.
+
+    Returns:
+        - doc_id
+        - entity
+        - relationships
     """
     logger.info(f"Graph query | doc_id: {doc_id} | entity: {entity}")
 
@@ -57,18 +73,27 @@ async def graph_query_api(
 
     try:
         relationships = await run_in_threadpool(query_graph, doc_id, entity)
-        return {"doc_id": doc_id, "entity": entity, "relationships": relationships}
+
+        return {
+            "doc_id": doc_id,
+            "entity": entity,
+            "relationships": relationships
+        }
 
     except Exception:
         logger.exception("Graph query failed")
         raise HTTPException(status_code=500, detail="Graph query failed.")
 
+
 @router.get("/graph-all")
 async def get_full_graph_endpoint(doc_id: str):
     """
-    Returns ALL nodes and relationships for a document.
-    Equivalent to: MATCH (a:Entity {doc_id})-[r]->(b) RETURN a, r, b
-    Used by the frontend to render the full graph visualization.
+    Get full graph.
+
+    Returns:
+        - doc_id
+        - relationship_count
+        - relationships
     """
     from app.services.graph_builder import get_full_graph as _get_full_graph
 
@@ -80,11 +105,13 @@ async def get_full_graph_endpoint(doc_id: str):
 
     try:
         results = await run_in_threadpool(_get_full_graph, doc_id)
+
         return {
             "doc_id": doc_id,
             "relationship_count": len(results),
             "relationships": results
         }
+
     except Exception:
         logger.exception("Full graph query failed")
         raise HTTPException(status_code=500, detail="Full graph query failed.")

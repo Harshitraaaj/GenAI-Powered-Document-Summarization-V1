@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 import logging
@@ -13,9 +14,15 @@ db = MongoDB()
 @router.post("/verify-facts")
 async def verify_facts_api(doc_id: str):
     """
-    Verifies summary claims against source chunks using vector search.
-    Returns coverage score and flagged unsupported claims.
-    Requires: /summarize to have been called first.
+    Verify summary claims against source chunks.
+
+    Returns:
+        - doc_id
+        - coverage_score
+        - total_claims
+        - supported_claims
+        - flagged_claims
+        - status
     """
     logger.info(f"Fact verification for doc_id: {doc_id}")
 
@@ -24,8 +31,22 @@ async def verify_facts_api(doc_id: str):
         raise HTTPException(status_code=404, detail="Document not found.")
 
     try:
-        result = await run_in_threadpool(verify_facts, doc_id, document["summary"], document["chunks"])
-        db.update_document(doc_id, {"facts_verified": True, "coverage_score": result["coverage_score"]})
+        result = await run_in_threadpool(
+            verify_facts,
+            doc_id,
+            document["summary"],
+            document["chunks"]
+        )
+
+        # Persist verification results
+        db.update_document(
+            doc_id,
+            {
+                "facts_verified": True,
+                "coverage_score": result["coverage_score"]
+            }
+        )
+
         return {
             "doc_id": doc_id,
             "coverage_score": result["coverage_score"],

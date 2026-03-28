@@ -125,20 +125,7 @@ async def _run(fn, *args):
 # ══════════════════════════════════════════════════════════════
 
 def _should_ocr(image_bytes: bytes) -> tuple[bool, str]:
-    """
-    General-purpose pre-filter that decides whether an image is
-    worth running through Tesseract.
 
-    Works for any PDF — not hardcoded to page numbers or document types.
-    Checks image properties that are reliable indicators of text content:
-
-    1. Size — too small to contain readable text
-    2. Aspect ratio — extremely wide/tall = decorative, not text
-    3. Pixel variance — low variance = solid fills, simple graphics
-    4. Unique color count — very few colors = vector export, icon
-
-    Returns (should_run_ocr, reason_string) for logging.
-    """
     try:
         image = Image.open(io.BytesIO(image_bytes)).convert("L")
         w, h  = image.size
@@ -179,25 +166,7 @@ def _should_ocr(image_bytes: bytes) -> tuple[bool, str]:
 # ══════════════════════════════════════════════════════════════
 
 def _ocr_bytes(image_bytes: bytes) -> str:
-    """
-    Blocking OCR. Called only after _should_ocr() returns True.
 
-    CHANGES FROM ORIGINAL:
-    ─────────────────────────────────────────────────────────────
-    1. Upscale OCR_UPSCALE_FACTOR x before OCR
-       WHY: Chart axis labels, tick numbers, and legend text are
-       often very small in PDFs. At original resolution Tesseract
-       misreads or skips them. Upscaling makes small text readable.
-
-    2. PSM OCR_PSM_MODE (sparse text) instead of PSM 6 (uniform block)
-       WHY: PSM 6 assumes the whole image is a clean paragraph —
-       so it tries to "read" chart grid lines, borders, and plot
-       elements as characters → produces garbage like 'TS y _ lm'.
-       PSM 11 says "find whatever text exists anywhere in this image,
-       ignore everything else" → correctly extracts numbers and labels
-       from charts, figures, and architecture diagrams.
-    ─────────────────────────────────────────────────────────────
-    """
     try:
         image = Image.open(io.BytesIO(image_bytes))
         w, h  = image.size
@@ -321,14 +290,6 @@ def _format_table(table) -> str:
         rows.append(" | ".join(c.strip() if c else "" for c in row))
     return "\n".join(rows)
 
-
-# ══════════════════════════════════════════════════════════════
-# OPTIMIZATION 1: All tables in ONE pdfplumber open
-# ══════════════════════════════════════════════════════════════
-# Old: one pdfplumber.open() call per page (39 opens for 39 pages)
-# New: one pdfplumber.open() for all pages
-# Saves: ~39 file open/close cycles + OS handle overhead on Windows
-
 def _extract_all_tables_batch(file_path: str) -> dict[int, list]:
     """
     Open PDF once via pdfplumber, extract tables from all pages.
@@ -388,19 +349,8 @@ def _extract_all_tables_batch(file_path: str) -> dict[int, list]:
     logger.info("Total tables extracted: %d", total_tables)
     return tables_by_page
 
-
-# ══════════════════════════════════════════════════════════════
-# OPTIMIZATION 2: All page text+images in ONE fitz open
-# ══════════════════════════════════════════════════════════════
-# Old: one fitz.open() call per page (39 opens for 39 pages)
-# New: one fitz.open() for all pages
-# Saves: ~39 file open/close cycles + repeated PDF parse overhead
-
 def _extract_all_pages_batch(file_path: str) -> list[tuple[str, list[bytes]]]:
-    """
-    Open PDF once via fitz, extract text+image bytes from all pages.
-    Returns list of (raw_text, [image_bytes]) indexed by page number.
-    """
+    
     results = []
     try:
         doc = fitz.open(file_path)
@@ -444,12 +394,7 @@ async def _process_one_page_async(
     image_bytes_list: list[bytes],
     tables_on_page:   list,
 ) -> tuple[int, str]:
-    """
-    Async page assembly:
-    - Receives pre-extracted data (no PDF re-open)
-    - Runs OCR concurrently on all images (with smart pre-filter)
-    - Injects tables
-    """
+    
     page_text = raw_text
 
     if image_bytes_list:
@@ -474,14 +419,7 @@ async def _process_one_page_async(
 # ══════════════════════════════════════════════════════════════
 
 async def _extract_pdf_async(file_path: str) -> str:
-    """
-    Optimized 3-phase pipeline:
 
-    Phase 1 — 1 pdfplumber open  → all tables extracted
-    Phase 2 — 1 fitz open        → all page text+images extracted
-    Phase 3 — async OCR across all pages concurrently
-              PSM sparse mode + upscale for chart/figure images
-    """
     logger.info(f"Starting async PDF extraction: {file_path}")
 
     # Phase 1: all tables, one file open

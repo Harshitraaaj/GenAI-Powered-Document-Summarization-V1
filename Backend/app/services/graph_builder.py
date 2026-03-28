@@ -52,16 +52,10 @@ class GraphBuilder:
 
         logger.info(f"Building graph | doc_id: {doc_id} | entities: {len(entities)}")
 
-        # OPTIMIZATION: single Cypher query clears both nodes + rels
-        # OLD: two separate session.run calls (delete rels, then delete nodes)
-        # NEW: one DETACH DELETE removes both in one round trip
         self._clear_existing_graph(doc_id)
 
         formatted_entities = format_entities_for_graph(doc_id, entities)
 
-        # OPTIMIZATION: batch MERGE instead of one-by-one
-        # OLD: loop → session.run per entity → N round trips
-        # NEW: UNWIND list → single Cypher call → 1 round trip
         nodes_created = self._create_entity_nodes_batch(doc_id, formatted_entities)
 
         rel_entities  = [e for e in formatted_entities if not self._is_low_value_entity(e)]
@@ -101,31 +95,19 @@ class GraphBuilder:
             cross_text   = " ".join(c.get("content", "") for c in chunks[:GRAPH_CHUNK_BATCH_SIZE])
             extraction_jobs.append((cross_batch, cross_text))
 
-        # OPTIMIZATION: fire ALL extraction jobs simultaneously
-        # OLD: sequential for loop → each Bedrock call waits for the previous
-        # NEW: asyncio.gather → all jobs fire at once, wall time = slowest job
         all_relationships = self._extract_relationships_parallel(extraction_jobs)
 
         all_relationships = self._filter_low_value_relationships(all_relationships)
         all_relationships = self._deduplicate_relationships(all_relationships)
         logger.info(f"Total unique relationships to create: {len(all_relationships)}")
 
-        # OPTIMIZATION: batch MERGE instead of one-by-one
-        # OLD: loop → session.run per relationship → N round trips
-        # NEW: UNWIND list → single Cypher call → 1 round trip
+    
         rels_created = self._create_relationships_batch(doc_id, all_relationships)
         logger.info(f"Graph built | nodes: {nodes_created} | relationships: {rels_created}")
 
         return {"nodes": nodes_created, "relationships": rels_created}
 
-    # ══════════════════════════════════════════════════════════
-    # OPTIMIZATION 1: parallel relationship extraction
-    # ══════════════════════════════════════════════════════════
-    # OLD: sequential for loop calling _extract_relationships once per batch
-    #      → if 5 batches × 2s each = 10s minimum
-    # NEW: asyncio.gather fires all batches simultaneously
-    #      → wall time = slowest single batch ~2-3s regardless of batch count
-
+    
     def _extract_relationships_parallel(
         self, jobs: list[tuple[list[dict], str]]
     ) -> list[dict]:
@@ -174,14 +156,6 @@ class GraphBuilder:
                 return pool.submit(asyncio.run, _run_all()).result()
         except RuntimeError:
             return asyncio.run(_run_all())
-
-    # ══════════════════════════════════════════════════════════
-    # OPTIMIZATION 2: batch node creation
-    # ══════════════════════════════════════════════════════════
-    # OLD: loop → session.run per entity → N round trips to Neo4j
-    #      196 entities × ~5ms per trip = ~1s just in network overhead
-    # NEW: UNWIND → single Cypher call → 1 round trip
-    #      All 196 entities in one shot → ~10ms
 
     def _create_entity_nodes_batch(self, doc_id: str, entities: list[dict]) -> int:
         """
@@ -249,21 +223,8 @@ class GraphBuilder:
         logger.info(f"Nodes created (fallback): {count}")
         return count
 
-    # ══════════════════════════════════════════════════════════
-    # OPTIMIZATION 3: batch relationship creation
-    # ══════════════════════════════════════════════════════════
-    # OLD: loop → session.run per relationship → N round trips
-    #      150 rels × ~5ms = ~750ms just in network overhead
-    # NEW: UNWIND → single Cypher call → 1 round trip ~10ms
-
     def _create_relationships_batch(self, doc_id: str, relationships: list[dict]) -> int:
-        """
-        Create all relationships in a single UNWIND Cypher call.
-        CHANGES FROM _create_relationships:
-        - One session.run instead of N session.run calls
-        - UNWIND processes the full list server-side
-        - count(r) returns total created
-        """
+
         if not relationships:
             return 0
 
@@ -326,12 +287,6 @@ class GraphBuilder:
                     logger.exception(f"Rel creation failed: {rel.get('source')} -> {rel.get('target')}")
         logger.info(f"Relationships created (fallback): {count}")
         return count
-
-    # ══════════════════════════════════════════════════════════
-    # OPTIMIZATION 4: single-query clear
-    # ══════════════════════════════════════════════════════════
-    # OLD: two separate session.run calls (delete rels, then nodes)
-    # NEW: DETACH DELETE removes nodes AND all their rels in one call
 
     def _clear_existing_graph(self, doc_id: str):
         """

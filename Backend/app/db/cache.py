@@ -6,102 +6,91 @@
 
 
 # class CacheService:
-#     """
-#     Handles PDF-level caching using MongoDB.
-
-#     Cache key = MD5 hash of PDF bytes
-#     """
-
 #     def __init__(self):
 #         self.db = MongoDB()
 
-
-#     def check_cache(self, file_bytes: bytes) -> dict | None:
+#     def check_cache(self, file_bytes: bytes):
 #         """
-#         Return cached result if PDF was already processed, else None.
+#         Returns a cached result only if the document has been explicitly
+#         marked as cached (i.e. upload_count threshold was met on a prior run).
+
+#         This means upload 1 and 2 will always run the full pipeline even if
+#         the document was stored — only upload 3+ that hit the threshold get
+#         a cache hit.
 #         """
 #         try:
 #             pdf_hash = get_pdf_hash(file_bytes)
-
-#             logger.info(f"Cache check | hash: {pdf_hash}")
-
 #             existing = self.db.get_by_hash(pdf_hash)
 
-#             if existing:
-#                 logger.info(f"Cache HIT | hash: {pdf_hash} | doc_id: {existing.get('doc_id')}")
-#                 return self._format_cached_response(existing)
+#             if existing and existing.get("cached") is True:
+#                 logger.info(f"Cache HIT | hash={pdf_hash} | doc_id={existing.get('doc_id')}")
+#                 return self._format(existing)
 
-#             logger.info(f"Cache MISS | hash: {pdf_hash}")
+#             logger.info(f"Cache MISS | hash={pdf_hash}")
 #             return None
 
 #         except Exception:
-#             logger.exception("Cache check failed — treating as cache miss")
+#             logger.exception("Cache check failed")
 #             return None
 
-#     def store_result(
-#         self,
-#         pdf_hash: str,
-#         doc_id: str,
-#         chunks: list[dict],
-#         summary: dict,
-#         filename: str = None
-#     ) -> bool:
+#     def mark_as_cached(self, pdf_hash: str):
 #         """
-#         Store processed result in MongoDB (chunks stored without embeddings).
+#         Promote an already-stored document to cache-hit eligible.
+#         Called after upload_count reaches the threshold.
+
+#         From this point on, check_cache() will return the stored result
+#         immediately without running the pipeline again.
+#         """
+#         try:
+#             self.db.update_by_hash(pdf_hash, {"cached": True})
+#             logger.info(f"Marked as cached | hash={pdf_hash}")
+#         except Exception:
+#             logger.exception("mark_as_cached failed")
+
+#     def store_result(self, pdf_hash: str, doc_id: str, chunks: list, summary: dict, filename: str = None):
+#         """
+#         Always called after a successful pipeline run (regardless of upload count).
+#         Stores the document so /extract-entities and other endpoints can find it.
+
+#         cached=False by default — mark_as_cached() promotes it later.
 #         """
 #         try:
 #             clean_chunks = [
-#                 {k: v for k, v in chunk.items() if k != "embedding"}
-#                 for chunk in chunks
+#                 {k: v for k, v in c.items() if k != "embedding"}
+#                 for c in chunks
 #             ]
 
 #             document = {
-#                 "pdf_hash": pdf_hash,
-#                 "doc_id": doc_id,
-#                 "chunks": clean_chunks,     
-#                 "summary": summary,
-#                 "filename": filename,
-#                 "entities": None,
-#                 "graph_built": False,
+#                 "pdf_hash":      pdf_hash,
+#                 "doc_id":        doc_id,
+#                 "chunks":        clean_chunks,
+#                 "summary":       summary,
+#                 "filename":      filename,
+#                 "entities":      None,
+#                 "graph_built":   False,
 #                 "facts_verified": False,
+#                 "cached":        False,   # promoted to True by mark_as_cached()
 #             }
 
-#             success = self.db.insert_document(document)
-
-#             if success:
-#                 logger.info(f"Cache stored | doc_id: {doc_id} | hash: {pdf_hash}")
-#             else:
-#                 logger.error(f"Cache store failed | doc_id: {doc_id}")
-
-#             return success
+#             return self.db.upsert_document(document)  # ← only change
 
 #         except Exception:
 #             logger.exception("store_result failed")
 #             return False
 
-#     def _format_cached_response(self, document: dict) -> dict:
+#     def _format(self, doc: dict) -> dict:
 #         """
-#         Format the MongoDB document into a clean API response.
-#         Strips internal fields and marks the response as cached.
+#         Format a MongoDB document into the standard pipeline response shape.
+#         doc_id is preserved so the caller can use it for all other endpoints.
 #         """
 #         return {
-#             "doc_id": document.get("doc_id"),
-#             "cached": True,
-#             "filename": document.get("filename"),
-#             "summary": document.get("summary", {}),
+#             "doc_id":   doc.get("doc_id"),
+#             "cached":   True,
+#             "filename": doc.get("filename"),
+#             "summary":  doc.get("summary", {}),
 #         }
 
-#     def is_cached(self, file_bytes: bytes) -> bool:
-#         """
-#         Quick boolean check — useful for logging/metrics
-#         without fetching the full document.
-#         """
-#         try:
-#             pdf_hash = get_pdf_hash(file_bytes)
-#             return self.db.get_by_hash(pdf_hash) is not None
 
-#         except Exception:
-#             return False
 
 import logging
 from app.db.mongodb import MongoDB
@@ -115,28 +104,40 @@ class CacheService:
         self.db = MongoDB()
 
     def check_cache(self, file_bytes: bytes):
+        """
+        Return cached result only if explicitly marked as cached.
+        """
         try:
             pdf_hash = get_pdf_hash(file_bytes)
             existing = self.db.get_by_hash(pdf_hash)
 
-            if existing:
-                logger.info(f"Cache HIT | {pdf_hash}")
+            if existing and existing.get("cached") is True:
+                logger.info(f"Cache HIT | hash={pdf_hash} | doc_id={existing.get('doc_id')}")
                 return self._format(existing)
 
-            logger.info(f"Cache MISS | {pdf_hash}")
+            logger.info(f"Cache MISS | hash={pdf_hash}")
             return None
 
         except Exception:
             logger.exception("Cache check failed")
             return None
 
-    # 🔥 NEW
-    def increment_upload_count(self, file_bytes: bytes) -> int:
-        pdf_hash = get_pdf_hash(file_bytes)
-        return self.db.increment_upload_count(pdf_hash)
-
-    def store_result(self, pdf_hash, doc_id, chunks, summary, filename=None):
+    def mark_as_cached(self, pdf_hash: str):
+        """
+        Mark document as cache-eligible.
+        """
         try:
+            self.db.update_by_hash(pdf_hash, {"cached": True})
+            logger.info(f"Marked as cached | hash={pdf_hash}")
+        except Exception:
+            logger.exception("mark_as_cached failed")
+
+    def store_result(self, pdf_hash: str, doc_id: str, chunks: list, summary: dict, filename: str = None):
+        """
+        Store pipeline result; cached=False by default.
+        """
+        try:
+            # Remove embeddings before storing
             clean_chunks = [
                 {k: v for k, v in c.items() if k != "embedding"}
                 for c in chunks
@@ -151,15 +152,19 @@ class CacheService:
                 "entities": None,
                 "graph_built": False,
                 "facts_verified": False,
+                "cached": False,
             }
 
-            return self.db.insert_document(document)
+            return self.db.upsert_document(document)
 
         except Exception:
             logger.exception("store_result failed")
             return False
 
-    def _format(self, doc):
+    def _format(self, doc: dict) -> dict:
+        """
+        Format cached response.
+        """
         return {
             "doc_id": doc.get("doc_id"),
             "cached": True,

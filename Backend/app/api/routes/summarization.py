@@ -1,4 +1,5 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 import uuid
 import logging
@@ -11,11 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 @router.post("/summarize")
-async def summarize_document(file: UploadFile = File(...)):
-    """
-    Upload a PDF or TXT file to generate a hierarchical summary.
-    Returns doc_id — save this for all other endpoints.
-    """
+async def summarize_document(request: Request, file: UploadFile = File(...)):
+
     logger.info(f"Summarization request: {file.filename}")
 
     if not file.filename.lower().endswith(ALLOWED_FILE_TYPES):
@@ -28,11 +26,24 @@ async def summarize_document(file: UploadFile = File(...)):
     temp_filename = f"{TEMP_FILE_PREFIX}_{uuid.uuid4().hex}_{file.filename}"
     temp_path = TEMP_DIR / temp_filename
 
+    # ── Pull vector_store from app.state ──────────────────────────────
+    vector_store = getattr(request.app.state, "vector_store", None)
+    if vector_store is None:
+        logger.warning(
+            "vector_store not found in app.state — embeddings will be skipped. "
+            "Make sure VectorStore is initialized in main.py startup."
+        )
+
     try:
         with open(temp_path, "wb") as buffer:
             buffer.write(contents)
 
-        result = await run_in_threadpool(run_pipeline, str(temp_path), contents)
+        result = await run_in_threadpool(
+            run_pipeline,
+            str(temp_path),
+            contents,
+            vector_store,       # ← injected here
+        )
         logger.info(f"Summarization completed for {file.filename}")
         return result
 

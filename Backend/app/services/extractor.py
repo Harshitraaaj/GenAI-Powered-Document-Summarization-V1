@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────
 VALID_ENTITY_TYPES = {
     "PERSON", "ORGANIZATION", "LOCATION", "TECHNOLOGY",
-    "CONCEPT", "EVENT", "PRODUCT", "DATE"
+    "CONCEPT", "EVENT", "PRODUCT", "DATE","MODEL", "DATASET" 
 }
 
 
