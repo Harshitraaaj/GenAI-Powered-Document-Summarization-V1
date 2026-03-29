@@ -1,21 +1,20 @@
 
+import logging
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.config import APP_TITLE
+from app.core.config import settings
 from app.api.routes import summarization, entities, graph, fact_verification, query
 from app.db.vector_store import VectorStore
 from app.services.fact_verifier import init_verifier
-
-import logging
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── Startup ───────────────────────────────────────────────────────
     vector_store = VectorStore()
     app.state.vector_store = vector_store
     logger.info("VectorStore initialized and attached to app.state")
@@ -23,20 +22,19 @@ async def lifespan(app: FastAPI):
     init_verifier(vector_store)
     logger.info("FactVerifier initialized with shared VectorStore")
 
-    yield  # app is running
+    yield
 
-    # ── Shutdown ──────────────────────────────────────────────────────
     logger.info("App shutting down")
 
 
-app = FastAPI(title=APP_TITLE, lifespan=lifespan)
+app = FastAPI(title=settings.APP_TITLE, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.CORS_ALLOW_ORIGINS,
+    allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
+    allow_methods=settings.CORS_ALLOW_METHODS,
+    allow_headers=settings.CORS_ALLOW_HEADERS,
 )
 
 app.include_router(summarization.router)

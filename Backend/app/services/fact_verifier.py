@@ -1,21 +1,12 @@
 import json
 import asyncio
 import logging
+import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from app.services.summarizer import invoke_model
 from app.db.vector_store import VectorStore
 from app.prompts.fact_verifier import FACT_VERIFICATION_PROMPT
-from app.core.config import (
-    MIN_CLAIM_WORDS,
-    TABLE_CHUNK_NUMERIC_THRESHOLD,
-    FACT_VERIFIER_TOP_K,
-    FACT_VERIFIER_MAX_CLAIMS,
-    FACT_VERIFIER_MAX_SOURCE_CHARS,
-    FACT_VERIFIER_COVERAGE_THRESHOLD,
-    QUERY_ENRICHMENT_MIN_WORDS,
-    KEYWORD_FALLBACK_MIN_WORD_LENGTH,
-    FACT_VERIFIER_WORKERS,
-)
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +19,7 @@ class FactVerifier:
         else:
             logger.warning(
                 "FactVerifier created without injected VectorStore — "
-                "creating its own. This adds ~22s cold-start on first call. "
-                "Pass vector_store= from app.state to avoid this."
+                "creating its own. Pass vector_store= from app.state to avoid this."
             )
             self.vector_store = VectorStore()
 
@@ -54,8 +44,7 @@ class FactVerifier:
         logger.info(f"Claims to verify: {len(claims)}")
 
         fallback_chunks = prose_chunks if prose_chunks else chunks
-
-        results = self._verify_all_claims_parallel(doc_id, claims, fallback_chunks)
+        results         = self._verify_all_claims_parallel(doc_id, claims, fallback_chunks)
 
         supported = []
         flagged   = []
@@ -72,7 +61,7 @@ class FactVerifier:
         total           = len(claims)
         supported_count = len(supported)
         coverage_score  = round(supported_count / total, 2) if total > 0 else 0.0
-        status          = "ok" if coverage_score >= FACT_VERIFIER_COVERAGE_THRESHOLD else "low_coverage_warning"
+        status          = "ok" if coverage_score >= settings.FACT_VERIFIER_COVERAGE_THRESHOLD else "low_coverage_warning"
 
         logger.info(f"Fact verification complete | coverage: {coverage_score} | flagged: {len(flagged)}")
 
@@ -94,13 +83,13 @@ class FactVerifier:
         async def _run_all():
             loop     = asyncio.get_event_loop()
             executor = ThreadPoolExecutor(
-                max_workers=FACT_VERIFIER_WORKERS,
-                thread_name_prefix="verify_worker"
+                max_workers=settings.FACT_VERIFIER_WORKERS,
+                thread_name_prefix=settings.FACT_VERIFIER_THREAD_NAME_PREFIX
             )
 
             logger.info(
                 f"[ASYNC] Firing {len(claims)} claim verifications simultaneously | "
-                f"workers={FACT_VERIFIER_WORKERS}"
+                f"workers={settings.FACT_VERIFIER_WORKERS}"
             )
 
             async def _one_claim(claim: str, idx: int) -> dict:
@@ -132,7 +121,6 @@ class FactVerifier:
 
         try:
             asyncio.get_running_loop()
-            import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 return pool.submit(asyncio.run, _run_all()).result()
         except RuntimeError:
@@ -148,7 +136,7 @@ class FactVerifier:
             vector_chunks = self.vector_store.find_supporting_chunks(
                 doc_id=doc_id,
                 claim=enriched_query,
-                top_k=FACT_VERIFIER_TOP_K
+                top_k=settings.FACT_VERIFIER_TOP_K
             )
 
             keyword_chunks = self._keyword_fallback(claim, fallback_chunks)
@@ -171,7 +159,7 @@ class FactVerifier:
 
             combined_source = "\n\n".join(
                 r.get("content", "") for r in relevant_chunks
-            )[:FACT_VERIFIER_MAX_SOURCE_CHARS]
+            )[:settings.FACT_VERIFIER_MAX_SOURCE_CHARS]
 
             if not combined_source.strip():
                 return {
@@ -184,14 +172,12 @@ class FactVerifier:
                 claim=claim,
                 source_text=combined_source
             )
-            output = invoke_model(prompt, max_tokens=300).strip()
+            output = invoke_model(prompt, max_tokens=settings.FACT_VERIFIER_MAX_TOKENS).strip()
             parsed = self._extract_json(output)
 
             confidence = parsed.get("confidence")
             if confidence is None:
-                logger.warning(
-                    f"Model returned no confidence for: {claim[:50]} — defaulting to 0.5"
-                )
+                logger.warning(f"Model returned no confidence for: {claim[:50]} — defaulting to 0.5")
                 confidence = 0.5
             confidence = max(0.0, min(1.0, float(confidence)))
 
@@ -231,7 +217,7 @@ class FactVerifier:
         if not tokens:
             return False
         numeric_count = sum(1 for t in tokens if any(c.isdigit() for c in t))
-        return (numeric_count / len(tokens)) > TABLE_CHUNK_NUMERIC_THRESHOLD
+        return (numeric_count / len(tokens)) > settings.TABLE_CHUNK_NUMERIC_THRESHOLD
 
     def _extract_claims(self, summary: dict) -> list[str]:
         claims       = []
@@ -263,22 +249,22 @@ class FactVerifier:
                 unique_claims.append(claim.strip())
 
         logger.info(f"Verifiable claims extracted: {len(unique_claims)}")
-        return unique_claims[:FACT_VERIFIER_MAX_CLAIMS]
+        return unique_claims[:settings.FACT_VERIFIER_MAX_CLAIMS]
 
     def _is_verifiable_claim(self, claim: str) -> bool:
         if not claim or not claim.strip():
             return False
-        return len(claim.strip().split()) >= MIN_CLAIM_WORDS
+        return len(claim.strip().split()) >= settings.MIN_CLAIM_WORDS
 
     def _enrich_query(self, claim: str) -> str:
-        if len(claim.strip().split()) >= QUERY_ENRICHMENT_MIN_WORDS:
+        if len(claim.strip().split()) >= settings.QUERY_ENRICHMENT_MIN_WORDS:
             return claim
-        return f"{claim} impact study findings outcomes"
+        return f"{claim} {settings.FACT_VERIFIER_QUERY_ENRICHMENT_SUFFIX}"
 
     def _keyword_fallback(self, claim: str, chunks: list[dict]) -> list[dict]:
         claim_words = {
             w.lower() for w in claim.split()
-            if len(w) > KEYWORD_FALLBACK_MIN_WORD_LENGTH
+            if len(w) > settings.KEYWORD_FALLBACK_MIN_WORD_LENGTH
         }
 
         scored = []
@@ -286,12 +272,12 @@ class FactVerifier:
             content = chunk.get("content", "").lower()
             score   = sum(1 for w in claim_words if w in content)
             if self._is_table_chunk(content):
-                score *= 0.5
+                score *= settings.FACT_VERIFIER_TABLE_SCORE_PENALTY
             scored.append((score, chunk))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        top = [chunk for score, chunk in scored[:5] if score > 0]
-        return top[:3] if top else chunks[:3]
+        top = [chunk for score, chunk in scored[:settings.FACT_VERIFIER_KEYWORD_SCORE_TOP_N] if score > 0]
+        return top[:settings.FACT_VERIFIER_KEYWORD_RETURN_TOP_N] if top else chunks[:settings.FACT_VERIFIER_KEYWORD_RETURN_TOP_N]
 
 
 _verifier: FactVerifier | None = None

@@ -77,8 +77,6 @@ def run_pipeline(
         )
 
         # ── Summarization + Parallel Embedding ────────────────────────
-        # Embeddings run inside the summarizer in a background thread
-        # at t=8s — parallel with chunk summarization, not before it.
         summarization_start = time.time()
         raw_result = run_hierarchical_summarization(
             chunks,
@@ -93,7 +91,7 @@ def run_pipeline(
 
         # ── Validation ────────────────────────────────────────────────
         validated_output = SummarizationOutput(**raw_result)
-        result           = validated_output.model_dump()
+        result  = validated_output.model_dump()
         result["doc_id"] = doc_id
 
         # ── Store document ────────────────────────────────────────────
